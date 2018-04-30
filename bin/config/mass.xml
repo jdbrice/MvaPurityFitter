@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <config>
 	<Task name="PurityFitter" type="PurityFitter" config="" nodePath="PurityFitter"  />
-	<mod>pp</mod>
 
+	<mod>pp-mass</mod>
+	<loop>mass</loop>
+	<nSamples>100000</nSamples>
 	<var>mlp</var>
 	<charge>pos</charge>
-	<fit opt="N" min="0.1" max="1.1" proton="false" kaon="true"/>
+	<fit opt="NE" min="0.1" max="1.1" proton="false" kaon="true"/>
 
-	<vars>dY, dZ, dTof, nsp, cell, dca</vars>
+	<vars>dY, dZ, dTof, mlp, cell, dca</vars> 
 	<units mlp="" dY="(cm)" dZ="(cm)" dTof="(ns)" nsp="" dca="(cm)" />
 
-	<can export="false" w="1200" h="900" h2="500" />
+	<can export="true" w="1200" h="900" h2="500" />
 
 	<PurityFitter>
 		<input>
 			<TFile url="/home/jdb12/nwork/dimuonAna/Plots/export/pid/data_pdfs.root" name="data" />
-			<TFile url="/home/jdb12/nwork/dimuonAna/Plots/export/pid/kaon_pdfs.root" name="kaon" />
-			<TFile url="/home/jdb12/nwork/dimuonAna/Plots/export/pid/proton_pdfs.root" name="proton" />
 			<TFile url="/home/jdb12/nwork/dimuonAna/Plots/export/pid/pdfs.root" name="mc" />
 		</input>
 
@@ -41,7 +41,7 @@
 		<!-- <pt>1.0, 1.05, 1.1, 1.125, 1.15, 1.175, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.55, 1.6, 1.65, 1.7, 1.75, 1.8, 1.85, 1.9, 1.95, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 3.25, 3.5, 3.75, 4.0, 4.5, 5.0, 6.0, 8.0, 15.0</pt> -->
 
 		<!-- <pt>1.15, 1.2, 1.25, 1.3</pt> -->
-		<mlp width="0.02" min="-0.5" max="1.2" />
+		<mlp width="0.01" min="-0.5" max="1.2" />
 		<dY width="1.0" min="-80" max="80"/>
 		<dZ width="2" min="-100" max="100"/>
 		<dTof width="0.1" min="-10" max="15" />
@@ -57,10 +57,20 @@
 
 
 	<style>
+		<band lc="black" lw="1" fc="#F00" /> 
 		<sig lc="red" lw="2" draw="same"/>
 		<bg lc="blue" lw="2" draw="same"/>
 		<kaon lc="#FF7000" lw="2" draw="same"/>
 		<proton lc="#FF0D9B" lw="2" draw="same"/>
 		<sum lc="black" lw="2" draw="same"/>
+		<data title="" fc="#999" draw="hpe" xtitle="NN response" ytitle="dN/d NN response" lc="#000" mc="#000" markerstyle="8"  min="5e-4" max="0.5" xr="-0.15, 1.1"/>
 	</style>
+
+	<!-- <style>
+		<bgbg lc="#00F" lw="2" />
+		<bgsig lc="#000" lw="2" />
+		<sigsig lc="#F00" lw="2" />
+		<sum lc="#6A6562" lw="3" />
+		
+	</style> -->
 </config>

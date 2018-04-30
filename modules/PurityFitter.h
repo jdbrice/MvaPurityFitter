@@ -7,6 +7,7 @@
 #include "CutCollection.h"
 
 #include "RooPlotLib.h"
+#include "FitConfidence.h"
 
 #include "TRandom3.h"
 
@@ -15,6 +16,10 @@
 #include "TLatex.h"
 
 #include "vendor/loguru.h"
+#include "TGraphAsymmErrors.h"
+
+#include "TString.h"
+// using TString;
 
 TH1 * hSignalPDF = nullptr;
 TH1 * hBackgroundPDF = nullptr;
@@ -41,8 +46,8 @@ Double_t fitfun( double *x, double *par ){
 Double_t fitfun3( double *x, double *par ){
 
 	double x0=x[0];
-	double scale_sig = par[0];
-	double scale_bg = par[1];
+	double scale_sig  = par[0];
+	double scale_bg   = par[1];
 	double scale_kaon = par[2];
 	
 
@@ -93,11 +98,18 @@ protected:
 	vector<string> var_names;
 	map<string, HistoBins> bins;
 
-	bool allow_proton;
-	bool allow_kaon;
+	bool allow_proton, use_proton;
+	bool allow_kaon, use_kaon;
 
 	bool export_img;
 
+	TCanvas *can = nullptr, *can2 = nullptr;
+
+	float Idata = 0;
+
+	map<string, vector<TH1 *>> nn_pt;
+
+	size_t nSamples = 1000;
 public:
 
 	virtual void initialize(){
@@ -108,18 +120,52 @@ public:
 		pid_bins.load( config, var );
 
 		var_names = config.getStringVector( "vars" );
-		for ( string v : var_names ){
-			bins[ v ].load( config, v );
-		}
-
-		bins[ "mlp" ].load( config, "mlp" );
+	
+		// bins[ "mlp" ].load( config, "mlp" );
 
 		allow_kaon   = config.getBool( "fit:kaon", false );
 		allow_proton = config.getBool( "fit:proton", false );
 
 		export_img = config.getBool( "can:export", false );
+
+		vector<string> paths = config.childrenOf( "bins" );
+		for ( auto p : paths ){
+			string tn = config.tagName(p);
+			LOG_F(  INFO, "Loading Bins: %s", tn.c_str() );
+			bins[ tn ].load( config, p );
+			LOG_F( INFO, "%s", bins[tn].toString().c_str() );
+		}
+
+
+		book->cd();
+		LOG_F( INFO, "var=%s", var.c_str() );
+		build_pt_projections( "sig" );
+		build_pt_projections( "bg" );
+		build_pt_projections( "kaon" );
+
+		nSamples = config.getInt( "nSamples", 1000 );
 	}
 
+	void build_pt_projections( string hname ){
+		LOG_SCOPE_FUNCTION( INFO );
+		TH2 * h2rawpos = get<TH2>( hname + "_pos_" + var, "mc" );
+		TH2 * h2rbpos = HistoBins::rebin2D( hname + "posrb", h2rawpos, bins["ptTemplate"], bins[var] );
+
+		TH2 * h2rawneg = get<TH2>( hname + "_neg_" + var, "mc" );
+		TH2 * h2rbneg = HistoBins::rebin2D( hname + "negrb", h2rawpos, bins["ptTemplate"], bins[var] );
+
+		vector<TH1 *> projections;
+		LOG_F( 9, "nBins = %d", h2rbpos->GetXaxis()->GetNbins() );
+		for ( size_t i = 0; i <= h2rbpos->GetXaxis()->GetNbins(); i++ ){
+			TH1 * h = h2rbpos->ProjectionY( TString::Format( "%s_pt_%lu", hname.c_str(), i ), i+1, i+1 );
+			TH1 * hn = h2rbneg->ProjectionY( TString::Format( "%s_neg_pt_%lu", hname.c_str(), i ), i+1, i+1 );
+			h->Add( hn );
+
+			LOG_F( 9, "Integral pt[%lu] = %f", i, h->Integral() );
+			projections.push_back( h );
+		}
+		nn_pt[ hname ] = projections;
+	}
 
 	TH1 * pt_projection( string name, TH2 * hin, float pt1, float pt2, HistoBins &rb ){
 
@@ -149,7 +195,7 @@ public:
 	}
 
 	void compare_other( TH1 * hsigFit, TH1 * hbgFit, TH1 * hkaonFit, TH1 * hprotonFit, float pt1, float pt2, TCanvas *can ){
-
+		LOG_SCOPE_FUNCTION( INFO );
 		RooPlotLib rpl;
 
 		bool use_kaon = false;
@@ -168,6 +214,7 @@ public:
 			lw = 2;
 		int i = 1; 
 		for ( string v : var_names ){
+			LOG_F( INFO, "compare to %s", v.c_str() );
 			int ix = i % 2;
 			int iy = i / 3;
 			can->cd(i);
@@ -255,8 +302,6 @@ public:
 		can->Print( (rpName).c_str()  );
 	}
 
-
-
 	float calc_purity( TH1 * hsig, TH1 * hbg, TH1 * hkaonFit, TH1 * hprotonFit, float pt1, float pt2, float cut = 0.95 ){
 
 
@@ -285,13 +330,167 @@ public:
 		book->get( "efficiency" )->SetBinContent( ipt, eff );
 	}
 
-	virtual void make(){
+	void fit_purity_pt( float pt1, float pt2, TH1 * hdata, TH1 * hsig, TH1 * hbg, TH1 * hkaon, TH1 * hproton, TH1 * hsum ){
+
+		TF1 * ff = nullptr;
+		if ( false == use_kaon && false == use_proton){
+			ff = new TF1( "ff", fitfun, -1, 2, 2 );
+			ff->SetParNames( "signal", "bg" );
+			ff->SetParLimits( 0, 1e-4, 1e9 );
+			ff->SetParLimits( 1, 1e-4, 1e9 );
+			ff->SetParameters( 1.0, 100.0 );
+		} else if ( true == use_kaon && false == use_proton ){
+			ff = new TF1( "ff", fitfun3, -1, 2, 3 );
+			ff->SetParNames( "signal", "bg", "kaon" );
+			ff->SetParLimits( 0, 1e-6, 1e9 );
+			ff->SetParLimits( 1, 1e-6, 1e9 );
+			ff->SetParLimits( 2, 1e-6, 1e9 );
+			ff->SetParameters( 1.0, 0.1, 0.01 );
+			// ff->FixParameter( 1, 0.00001 );
+		} else if ( false == use_kaon && true == use_proton ){
+			ff = new TF1( "ff", fitfun3, -1, 2, 3 );
+			ff->SetParNames( "signal", "bg", "proton" );
+			// ff->SetParLimits( 0, 1e-4, 1e9 );
+			// ff->SetParLimits( 1, 1e-4, 1e9 );
+			// ff->SetParLimits( 2, 1e-4, 1e9 );
+			ff->SetParameters( 1.0, 100.0, 50 );
+		} else if ( use_kaon && use_proton ){
+			ff = new TF1( "ff", fitfun4, -1, 2, 4 );
+			ff->SetParNames( "signal", "bg", "kaon", "proton" );
+			ff->SetParLimits( 0, 1e-4, 1e9 );
+			ff->SetParLimits( 1, 1e-4, 1e9 );
+			ff->SetParLimits( 2, 1e-4, 1e9 );
+			ff->SetParLimits( 3, 1e-4, 1e9 );
+			ff->SetParameters( 1.0, 100.0, 500.0, 1e-3 );
+		}
+		
+		ff->SetNpx( 1000 );
+		ff->SetLineColor(kBlack);
+		ff->SetLineWidth(2);
+
+
+		// Execute fit
+		string fitOpt = config[ "fit:opt" ] + "R";
+		if ( config.exists( "fit:min" ) && config.exists( "fit:max" ) ){
+			LOG_F( INFO, "Fitting (opt=%s) in range (%f, %f)", fitOpt.c_str(), config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
+
+			hdata->Fit( "ff", fitOpt.c_str(), "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
+			hdata->Fit( "ff", fitOpt.c_str(), "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
+			hdata->Fit( "ff", fitOpt.c_str(), "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
+
+		} else {
+			hdata->Fit( "ff", fitOpt.c_str() );
+			hdata->Fit( "ff", fitOpt.c_str() );
+			hdata->Fit( "ff", fitOpt.c_str() );
+		}
+
+		report_fit_pt( ff, pt1, pt2, hdata, hsig, hbg, hkaon, hproton, hsum );
+
+		delete ff;
+	}
+
+	void report_fit_pt( TF1 * ff, float pt1, float pt2, TH1 * hdata, TH1 * hsig, TH1 * hbg, TH1 * hkaon, TH1 * hproton, TH1 * hsum){
+
+		RooPlotLib rpl;
+
+		rpl.style( hdata ).set( "xtitle", var + " " + config[ "units" ] )
+			.set( "ytitle", "dN/d" + var + " " + config[ "units" ] + "^{-1}" )
+			// .set( "title", TString::Format("%s : %0.2f < pT < %0.2f (GeV/c)", config["charge"].c_str(), pt1, pt2 ).Data() )
+			.set( "lw", "1.5" )
+			.set( "fc", "#999" )
+			.set( "yto", 1.3 )
+			.set( "logy", 1 )
+			.set( "draw", "h" )
+			// .set( "xr", -0.2, 1.1 )
+			// .set( "min", 1 )
+			.set( "max", 1.0 )
+			.set( "lc", "#222222" ).draw();
+
+		hsig->Scale( ff->GetParameter( "signal" ) );
+		hbg->Scale( ff->GetParameter( "bg" ) );
+		if ( use_kaon ) hkaon->Scale( ff->GetParameter( "kaon" ) );
+		if ( use_proton ) hproton->Scale( ff->GetParameter( "proton" ) );
+
+		hsum->Add( hsig );
+		hsum->Add( hbg );
+		if ( use_kaon )
+			hsum->Add( hkaon );
+		if ( use_proton )
+			hsum->Add( hproton );
+
+		rpl.style( hsig ).set( config, "style.sig" ).draw();
+		rpl.style( hbg ).set( config, "style.bg" ).draw();
+		if ( use_kaon ) rpl.style( hkaon ).set( config, "style.kaon" ).draw();
+		if ( use_proton ) rpl.style( hproton ).set( config, "style.proton" ).draw();
+		rpl.style( hsum ).set( config, "style.sum" ).draw();
+
+		TLatex tl;
+		tl.SetTextSize( 12.0 / 360.0 );
+		tl.DrawLatexNDC( 0.5, 0.90, TString::Format("%s : %0.2f < pT < %0.2f (GeV/c)", config["charge"].c_str(), pt1, pt2 ) );
+		tl.DrawLatexNDC( 0.5, 0.85, TString::Format("#chi^2 / ndf = %0.2f / %d = %0.2f", ff->GetChisquare(), ff->GetNDF(), ff->GetChisquare() / (float)ff->GetNDF() ) );
+		tl.DrawLatexNDC( 0.5, 0.8, TString::Format("signal = %0.2f", ff->GetParameter( "signal" )) );
+		tl.DrawLatexNDC( 0.5, 0.75, TString::Format("background (#pi) = %0.2f", ff->GetParameter( "bg" )) );
+		if ( use_kaon ) tl.DrawLatexNDC( 0.5, 0.70, TString::Format("background (K) = %0.6f", ff->GetParameter( "kaon" )) );
+		
+		if ( use_proton && !use_kaon ) tl.DrawLatexNDC( 0.5, 0.70, TString::Format("background (P) = %0.6f", ff->GetParameter( "proton" )) );
+		if ( use_proton && use_kaon ) tl.DrawLatexNDC( 0.5, 0.65, TString::Format("background (P) = %0.6f", ff->GetParameter( "proton" )) );
+		
+
+		int iptbin = book->get( "chi2ndf" )->GetXaxis()->FindBin( (pt1+pt2)/2.0 );
+		book->get( "chi2ndf" )->SetBinContent( iptbin, ff->GetChisquare() / (float)ff->GetNDF() );
+
+		TLegend *leg = new TLegend( 0.15, 0.8, 0.45, 0.95 );
+		leg->SetNColumns(2);
+		leg->AddEntry( hsig, "Signal" );
+		leg->AddEntry( hbg, "#pi Background" );
+		if ( use_kaon ) leg->AddEntry( hkaon, "K Background" );
+		if ( use_proton ) leg->AddEntry( hproton, "p Background" );
+
+		leg->Draw("same");
+
+		can->Print( (rpName).c_str()  );
+		if ( export_img ) can->Print( ("export/"+ config["mod"] + "/fit-" + dts( pt1 ) + "-" + dts(pt2) + ".pdf" ).c_str() );
+
+
+		hsum->Scale( Idata );
+		hdata->Scale( Idata );
+		hsum->Divide( hdata );
+		hsum->SetTitle( TString::Format("%0.2f < pT < %0.2f; %s; fit / data", pt1, pt2, var.c_str() ) );
+		// gPad->SetLogy(0);
+		
+		if ( config.exists( "fit:min" ) && config.exists( "fit:max" ) ){
+			hsum->Fit( "pol0", "R", "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
+		} else {
+			hsum->Fit( "pol0" );
+		}
+		rpl.style( hsum )
+			// .set( "xr", -0.2, 1.1 )
+			.set( "logy", 0 )
+			.set( "min", 0 )
+			.set( "max", 2.0 )
+			.set( "yto", 1.2 );
+		hsum->Draw();
+
+		can->Print( (rpName).c_str()  );
+		if ( export_img ) {
+			can2->cd();
+			hsum->Draw();
+			can2->Print( ("export/"+ config["mod"] +"/ratio-" + dts( pt1 ) + "-" + dts(pt2) + ".pdf" ).c_str() );
+			can->cd();
+		}
+
+
+		if ( !use_kaon )
+			hkaon = nullptr;
+		if ( !use_proton )
+			hproton = nullptr;
+		
+		compare_other( hsig, hbg, hkaon, hproton, pt1, pt2, can );
+		calc_purity( hsig, hbg, hkaon, nullptr, pt1, pt2 );
+	}
+
+	void loop_on_pt(  ){
 		LOG_SCOPE_FUNCTION( INFO );
-
-		book->cd();
-		book->makeAll( config, nodePath + ".histograms" );
-
-
 		TH2 * hdata_pos = get<TH2>( "pos_" + var + "_vs_pt", "data" );
 		TH2 * hdata_neg = get<TH2>( "neg_" + var + "_vs_pt", "data" );
 
@@ -322,30 +521,14 @@ public:
 
 		LOG_F( INFO, "hmc_pos_proton=%p", hmc_pos_proton );
 		LOG_F( INFO, "hmc_neg_proton=%p", hmc_neg_proton );
-
-		TCanvas *can = new TCanvas( "can", "can", config.get<int>( "can:w", 500 ), config.get<int>( "can:h", 500 ) );
-		TCanvas *can2 = new TCanvas( "can2", "can2", config.get<int>( "can:w", 500 ), config.get<int>( "can:h2", 500 ) );
-		can->SetTopMargin( 0.05 );
-		can->SetRightMargin( 0.01 );
-		can->SetBottomMargin( 0.11 );
-		can->SetLeftMargin( 0.15 );
-
-		can2->SetTopMargin( 0.05 );
-		can2->SetRightMargin( 0.01 );
-		can2->SetBottomMargin( 0.11 );
-		can2->SetLeftMargin( 0.15 );
-
-
-		rpName = config[nodePath + ".output.Report:url" ];
-		can->Print( (rpName+"[").c_str() );
 		
 		gStyle->SetOptFit(111);
 		gStyle->SetOptStat(0);
 
 		RooPlotLib rpl;
 
-		HistoBins pt_bins;
-		pt_bins.load( config, "pt" );
+		HistoBins pt_bins = bins["pt"];
+		
 
 		TH2 * hdata_use = hdata_pos;
 		TH2 * hsig_use = hmc_pos_sig;
@@ -368,10 +551,10 @@ public:
 			can->Clear();
 
 			string suffix="_"+dtes( pt1 ) +"_" + dtes(pt2);
-			TH1 * hdata    = pt_projection( "data" + suffix, hdata_use, pt1, pt2, bins[ var ] );
-			TH1 * hsig     = pt_projection( "sig" + suffix, hsig_use, pt1, pt2, bins[ var ] );
-			TH1 * hbg      = pt_projection( "bg" + suffix, hbg_use, pt1, pt2, bins[ var ] );
-			TH1 * hkaon    = pt_projection( "kaon" + suffix, hkaon_use, pt1, pt2, bins[ var ] );
+			TH1 * hdata    = pt_projection( "data"   + suffix, hdata_use, pt1, pt2, bins[ var ] );
+			TH1 * hsig     = pt_projection( "sig"    + suffix, hsig_use, pt1, pt2, bins[ var ] );
+			TH1 * hbg      = pt_projection( "bg"     + suffix, hbg_use, pt1, pt2, bins[ var ] );
+			TH1 * hkaon    = pt_projection( "kaon"   + suffix, hkaon_use, pt1, pt2, bins[ var ] );
 			TH1 * hproton  = pt_projection( "proton" + suffix, hproton_use, pt1, pt2, bins[ var ] );
 
 			// TH1 * hbgsmooth = (TH1*)hbg->Clone( "hbgsmooth" );
@@ -387,9 +570,9 @@ public:
 
 			// hbg = hbgsmooth;
 
-			hbg = subsample( hbg );
+			// hbg = subsample( hbg );
 			// hproton = subsample( hproton, 1.5 );
-			hkaon = subsample( hkaon );
+			// hkaon = subsample( hkaon );
 			// hsig = subsample( hsig );
 
 			
@@ -400,18 +583,16 @@ public:
 			LOG_F( INFO, "hproton = %p", hproton );
 
 			hdata->Sumw2(true);
-			float Idata = hdata->Integral();
+			Idata = hdata->Integral();
 			hdata->Scale( 1.0 / Idata );
-			
-			
 
 			hsig->Scale( 1.0 / hsig->Integral() );
 			hbg->Scale( 1.0 / hbg->Integral() );
-			bool use_kaon = false;
+			use_kaon = false;
 			if ( pt1 < 3.0 && allow_kaon)
 				use_kaon = true;
 
-			bool use_proton = false;
+			use_proton = false;
 			if ( pt1 < 2.0 && allow_proton)
 				use_proton = true;
 			
@@ -432,162 +613,11 @@ public:
 			else 
 				hProtonPDF = nullptr;
 
-			
 			TH1 * hsum = (TH1*)hbg->Clone( ("hsum"+suffix).c_str() );
 			hsum->Reset();
 
-			TF1 * ff = nullptr;
-			if ( false == use_kaon && false == use_proton){
-				ff = new TF1( "ff", fitfun, -1, 2, 2 );
-				ff->SetParNames( "signal", "bg" );
-				ff->SetParLimits( 0, 1e-4, 1e9 );
-				ff->SetParLimits( 1, 1e-4, 1e9 );
-				ff->SetParameters( 1.0, 100.0 );
-			} else if ( true == use_kaon && false == use_proton ){
-				ff = new TF1( "ff", fitfun3, -1, 2, 3 );
-				ff->SetParNames( "signal", "bg", "kaon" );
-				ff->SetParLimits( 0, 1e-4, 1e9 );
-				ff->SetParLimits( 1, 1e-4, 1e9 );
-				ff->SetParLimits( 2, 1e-4, 1e9 );
-				ff->SetParameters( 1.0, 0.1, 0.01 );
-				// ff->FixParameter( 1, 0.00001 );
-			} else if ( false == use_kaon && true == use_proton ){
-				ff = new TF1( "ff", fitfun3, -1, 2, 3 );
-				ff->SetParNames( "signal", "bg", "proton" );
-				// ff->SetParLimits( 0, 1e-4, 1e9 );
-				// ff->SetParLimits( 1, 1e-4, 1e9 );
-				// ff->SetParLimits( 2, 1e-4, 1e9 );
-				ff->SetParameters( 1.0, 100.0, 50 );
-			} else if ( use_kaon && use_proton ){
-				ff = new TF1( "ff", fitfun4, -1, 2, 4 );
-				ff->SetParNames( "signal", "bg", "kaon", "proton" );
-				ff->SetParLimits( 0, 1e-4, 1e9 );
-				ff->SetParLimits( 1, 1e-4, 1e9 );
-				ff->SetParLimits( 2, 1e-4, 1e9 );
-				ff->SetParLimits( 3, 1e-4, 1e9 );
-				ff->SetParameters( 1.0, 100.0, 500.0, 1e-3 );
-			}
+			fit_purity_pt( pt1, pt2, hdata, hsig, hbg, hkaon, hproton, hsum );
 			
-			ff->SetNpx( 1000 );
-			ff->SetLineColor(kBlack);
-			ff->SetLineWidth(2);
-
-			// hdata->Draw();
-	
-			rpl.style( hdata ).set( "xtitle", var + " " + config[ "units" ] )
-				.set( "ytitle", "dN/d" + var + " " + config[ "units" ] + "^{-1}" )
-				.set( "title", TString::Format("%s : %0.2f < pT < %0.2f (GeV/c)", config["charge"].c_str(), pt1, pt2 ).Data() )
-				.set( "lw", "1.5" )
-				.set( "fc", "#999" )
-				.set( "yto", 1.3 )
-				.set( "logy", 1 )
-				.set( "draw", "h" )
-				// .set( "xr", -0.2, 1.1 )
-				// .set( "min", 1 )
-				.set( "max", 1.0 )
-				.set( "lc", "#222222" ).draw();
-
-			string fitOpt = config[ "fit:opt" ];
-			if ( config.exists( "fit:min" ) && config.exists( "fit:max" ) ){
-				LOG_F( INFO, "Fitting (opt=%s) in range (%f, %f)", fitOpt.c_str(), config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
-
-				hdata->Fit( "ff", fitOpt.c_str(), "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
-				hdata->Fit( "ff", fitOpt.c_str(), "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
-				hdata->Fit( "ff", fitOpt.c_str(), "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
-
-			} else {
-				hdata->Fit( "ff", fitOpt.c_str() );
-				hdata->Fit( "ff", fitOpt.c_str() );
-				hdata->Fit( "ff", fitOpt.c_str() );
-			}
-
-			
-
-			hsig->Scale( ff->GetParameter( "signal" ) );
-			hbg->Scale( ff->GetParameter( "bg" ) );
-			if ( use_kaon )hkaon->Scale( ff->GetParameter( "kaon" ) );
-			if ( use_proton ) hproton->Scale( ff->GetParameter( "proton" ) );
-
-			hsum->Add( hsig );
-			hsum->Add( hbg );
-			if ( use_kaon )
-				hsum->Add( hkaon );
-			if ( use_proton )
-				hsum->Add( hproton );
-
-			rpl.style( hsig ).set( config, "style.sig" ).draw();
-			rpl.style( hbg ).set( config, "style.bg" ).draw();
-			if ( use_kaon ) rpl.style( hkaon ).set( config, "style.kaon" ).draw();
-			if ( use_proton ) rpl.style( hproton ).set( config, "style.proton" ).draw();
-			rpl.style( hsum ).set( config, "style.sum" ).draw();
-
-			TLatex tl;
-			tl.SetTextSize( 12.0 / 360.0 );
-			tl.DrawLatexNDC( 0.5, 0.85, TString::Format("#chi^2 / ndf = %0.2f / %d = %0.2f", ff->GetChisquare(), ff->GetNDF(), ff->GetChisquare() / (float)ff->GetNDF() ) );
-			tl.DrawLatexNDC( 0.5, 0.8, TString::Format("signal = %0.2f", ff->GetParameter( "signal" )) );
-			tl.DrawLatexNDC( 0.5, 0.75, TString::Format("background (#pi) = %0.2f", ff->GetParameter( "bg" )) );
-			if ( use_kaon ) tl.DrawLatexNDC( 0.5, 0.70, TString::Format("background (K) = %0.6f", ff->GetParameter( "kaon" )) );
-			
-			if ( use_proton && !use_kaon ) tl.DrawLatexNDC( 0.5, 0.70, TString::Format("background (P) = %0.6f", ff->GetParameter( "proton" )) );
-			if ( use_proton && use_kaon ) tl.DrawLatexNDC( 0.5, 0.65, TString::Format("background (P) = %0.6f", ff->GetParameter( "proton" )) );
-			
-
-			int iptbin = book->get( "chi2ndf" )->GetXaxis()->FindBin( (pt1+pt2)/2.0 );
-			book->get( "chi2ndf" )->SetBinContent( iptbin, ff->GetChisquare() / (float)ff->GetNDF() );
-
-			TLegend *leg = new TLegend( 0.15, 0.8, 0.45, 0.95 );
-			leg->SetNColumns(2);
-			leg->AddEntry( hsig, "Signal" );
-			leg->AddEntry( hbg, "#pi Background" );
-			if ( use_kaon ) leg->AddEntry( hkaon, "K Background" );
-			if ( use_proton ) leg->AddEntry( hproton, "p Background" );
-
-			leg->Draw("same");
-
-			can->Print( (rpName).c_str()  );
-			if ( export_img ) can->Print( ("export/"+ config["mod"] + "/fit-" + dts( pt1 ) + "-" + dts(pt2) + ".pdf" ).c_str() );
-
-
-			hsum->Scale( Idata );
-			hdata->Scale( Idata );
-			hsum->Divide( hdata );
-			hsum->SetTitle( TString::Format("%0.2f < pT < %0.2f; %s; fit / data", pt1, pt2, var.c_str() ) );
-			// gPad->SetLogy(0);
-			
-			if ( config.exists( "fit:min" ) && config.exists( "fit:max" ) ){
-				hsum->Fit( "pol0", "R", "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
-			} else {
-				hsum->Fit( "pol0" );
-			}
-			rpl.style( hsum )
-				// .set( "xr", -0.2, 1.1 )
-				.set( "logy", 0 )
-				.set( "min", 0 )
-				.set( "max", 2.0 )
-				.set( "yto", 1.2 );
-			hsum->Draw();
-
-			can->Print( (rpName).c_str()  );
-			if ( export_img ) {
-				can2->cd();
-				hsum->Draw();
-				can2->Print( ("export/"+ config["mod"] +"/ratio-" + dts( pt1 ) + "-" + dts(pt2) + ".pdf" ).c_str() );
-				can->cd();
-			}
-
-
-			if ( !use_kaon )
-				hkaon = nullptr;
-			if ( !use_proton )
-				hproton = nullptr;
-			
-			compare_other( hsig, hbg, hkaon, hproton, pt1, pt2, can );
-			calc_purity( hsig, hbg, hkaon, nullptr, pt1, pt2 );
-			
-
-
-			
-			delete ff;
 			delete hsum;
 			delete hsig;
 			delete hbg;
@@ -595,9 +625,231 @@ public:
 			delete hBackgroundPDF;
 
 		}
+	}
 
 
+	/* Generates template pid shapes from MC
+	 * Samples the input pT distribution and builds a weighted template for the given kinematics
+	 *
+	 */
+	void generate_templates( TH1 * hpt, TH1 * hmu, TH1 * hpi, TH1 * hk ){
+		LOG_SCOPE_FUNCTION( INFO );
+		
+		assert( hpt != nullptr );
+		assert( nullptr != hmu );
+		assert( nullptr != hpi );
+		assert( nullptr != hk );
 
+		if ( hpt->Integral() <= 0 ) {
+			LOG_F( INFO, "pt is empty" );
+			return;
+		}
+
+		assert( nn_pt.count( "sig" ) > 0 );
+		assert( nn_pt.count( "bg" ) > 0 );
+		assert( nn_pt.count( "kaon" ) > 0 );
+
+		vector<TH1 * > sig_pt = nn_pt[ "sig" ];
+		vector<TH1 * > pi_pt  = nn_pt[ "bg" ];
+		vector<TH1 * > k_pt  = nn_pt[ "kaon" ];
+		
+
+		for ( size_t i = 0; i < nSamples; i++ ){
+			
+			float pt1 = hpt->GetRandom();
+			if ( pt1 > 3 ) pt1 = 3;
+			
+			int ipt = bins[ "ptTemplate" ].findBin( pt1 );
+			if ( ipt < 0 || ipt >= sig_pt.size() ) continue;
+
+			float rMu = sig_pt[ipt]->GetRandom();
+			float rPi = pi_pt[ipt]->GetRandom();
+			float rK  =  k_pt[ipt]->GetRandom();
+
+			LOG_F( 9, "pt=%f, ipt=%d, rMu=%f, rPi=%f, rK=%f", pt1, ipt, rMu, rPi, rK );
+
+			if ( rMu <= 0 && "mlp" == var )
+				rMu = -999;
+
+
+			hmu->Fill( rMu );
+			hpi->Fill( rPi );
+			hk ->Fill( rK  );
+		}
+	} // generate_templates
+
+	TF1 * fit_pid( TFitResultPtr * fr, TH1 * hvar, TH1 * hmu, TH1 * hpi, TH1 * hk = nullptr ){
+
+		TF1 * ff = nullptr;
+		if ( nullptr == hk){
+			ff = new TF1( "ff", fitfun, -1, 2, 2 );
+			ff->SetParNames( "muon", "pion" );
+			ff->SetParLimits( 0, 1e-4, 1e9 );
+			ff->SetParLimits( 1, 1e-4, 1e9 );
+			ff->SetParameters( 1.0, 100.0 );
+		} else {
+			ff = new TF1( "ff", fitfun3, -1, 2, 3 );
+			ff->SetParNames( "muon", "pion", "kaon" );
+			ff->SetParLimits( 0, 1e-16, 1.0 );
+			ff->SetParLimits( 1, 1e-10, 1.0 );
+			ff->SetParLimits( 2, 1e-10, 1.0 );
+			ff->SetParameters( 1.0, 0.1, 0.01 );
+			// ff->FixParameter( 1, 0.00001 );
+		}
+		
+		ff->SetNpx( 1000 );
+		ff->SetLineColor(kBlack);
+		ff->SetLineWidth(2);
+
+
+		// Execute fit
+		string fitOpt = config[ "fit:opt" ] + "R S";
+		if ( config.exists( "fit:min" ) && config.exists( "fit:max" ) ){
+			LOG_F( INFO, "Fitting (opt=%s) in range (%f, %f)", fitOpt.c_str(), config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
+
+			(*fr) = hvar->Fit( ff, fitOpt.c_str(), "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
+		} else {
+			(*fr) = hvar->Fit( ff, fitOpt.c_str() );
+		}
+
+		return ff;
+	}
+
+	void norm( TH1 * h ){
+		assert( nullptr != h );
+		h->Scale( 1.0 / h->Integral() );
+	}
+
+	void loop_on_mass( string scharge = "pos" ){
+		LOG_SCOPE_FUNCTION( INFO );
+
+		RooPlotLib rpl;
+
+		TH2 * h2pt  = get<TH2>( scharge + "_pt_vs_mass", "data" );
+		TH2 * h2var = get<TH2>( scharge + "_" + var + "_vs_mass", "data" );
+		assert( nullptr != h2var );
+		assert( nullptr != h2pt );
+
+		TH2 * h2varrb = HistoBins::rebin2D( scharge + "_" + var + "_vs_mass_rb", h2var, bins["mass"], bins[ var ] );
+		TH2 * h2ptrb  = HistoBins::rebin2D( scharge + "_pt_vs_mass_rb", h2pt, bins["mass"], bins["ptTemplate"] );
+		assert( nullptr != h2varrb );
+		assert( nullptr != h2ptrb );
+
+		gStyle->SetOptFit(111);
+		gStyle->SetOptStat(0);
+
+		can->cd();
+		for ( size_t iMass = 1; iMass <= h2varrb->GetXaxis()->GetNbins(); iMass ++  ){
+			TH1 * hvar = (TH1*)h2varrb->ProjectionY( TString::Format( "%s_%s_vs_mass_%lu", scharge.c_str(), var.c_str(), iMass), iMass, iMass );
+			TH1 * hpt  = (TH1*)h2ptrb ->ProjectionY( TString::Format( "%s_pt_vs_mass_%lu", scharge.c_str(), iMass), iMass, iMass );
+
+			float m1 = h2varrb->GetXaxis()->GetBinLowEdge( iMass );
+			float m2 = h2varrb->GetXaxis()->GetBinUpEdge( iMass );
+
+			TH1 * hmu = new TH1F( TString::Format( "template_%s_mu_m%lu", scharge.c_str(), iMass ), "", bins[ var ].nBins(), bins[ var ].getBins().data() );
+			TH1 * hpi = new TH1F( TString::Format( "template_%s_pi_m%lu", scharge.c_str(), iMass ), "", bins[ var ].nBins(), bins[ var ].getBins().data() );
+			TH1 * hk  = new TH1F( TString::Format( "template_%s_k_m%lu", scharge.c_str(), iMass ), "", bins[ var ].nBins(), bins[ var ].getBins().data() );
+
+			generate_templates( hpt, hmu, hpi, hk );
+
+			hvar->Sumw2();
+			hmu->Sumw2();
+			hpi->Sumw2();
+			hk->Sumw2();
+
+			norm( hmu );
+			norm( hpi );
+			norm( hk );
+			norm( hvar );
+
+			hSignalPDF = hmu;
+			hBackgroundPDF = hpi;
+			hKaonPDF = hk;
+
+			TF1 * ff = nullptr;
+			TFitResultPtr fr = nullptr;
+			ff = fit_pid( &fr, hvar, hmu, hpi, hk );
+
+			rpl.style( hvar ).set( config, "style.data" ).draw();
+			gPad->SetLogy(1);
+
+			hmu->Scale( ff->GetParameter( "muon" ) );
+			hpi->Scale( ff->GetParameter( "pion" ) );
+			hk->Scale( ff->GetParameter( "kaon" ) );
+
+			TH1 * hsum = (TH1*)hmu->Clone( TString::Format( "template_%s_sum_m%lu", scharge.c_str(), iMass ) );
+			hsum->Add( hpi );
+			hsum->Add( hk );
+
+			rpl.style( hmu ).set(config, "style.sig" );
+			rpl.style( hpi ).set(config, "style.bg" );
+			rpl.style( hk ).set(config, "style.kaon" );
+			rpl.style( hsum ).set(config, "style.sum" );
+
+			hmu->Draw( "same hist" );
+			hpi->Draw( "same hist" );
+			hk->Draw( "same hist" );
+			hsum->Draw( "same hist" );
+
+			TLatex tl;
+			tl.SetTextSize( 12.0 / 360.0 );
+			tl.DrawLatexNDC( 0.70, 0.90, TString::Format( "%0.2f < M < %0.2f (GeV/c^{2})", m1, m2 ) );
+			tl.DrawLatexNDC( 0.18, 0.85, TString::Format("#chi^2 / ndf = %0.2f / %d = %0.2f", ff->GetChisquare(), ff->GetNDF(), ff->GetChisquare() / (float)ff->GetNDF() ) );
+			tl.DrawLatexNDC( 0.18, 0.80, TString::Format("muon = %0.4f #pm %0.4f", ff->GetParameter( "muon" ), ff->GetParError( ff->GetParNumber( "muon" ) )) );
+			tl.DrawLatexNDC( 0.58, 0.85, TString::Format("pion = %0.4f #pm %0.4f", ff->GetParameter( "pion" ), ff->GetParError( ff->GetParNumber( "pion" ) )) );
+			tl.DrawLatexNDC( 0.58, 0.80, TString::Format("kaon = %0.4f #pm %0.4f", ff->GetParameter( "kaon" ), ff->GetParError( ff->GetParNumber( "kaon" ) )) );
+
+			TLegend *leg = new TLegend( 0.18, 0.88, 0.75, 0.95 );
+			leg->SetBorderSize( 0 );
+			leg->SetNColumns(5);
+			leg->AddEntry( hvar, "data" );
+			leg->AddEntry( hmu, "#mu" );
+			leg->AddEntry( hpi, "#pi" );
+			leg->AddEntry( hk, "K" );
+			leg->AddEntry( hsum, "Total Fit" );
+
+			leg->Draw("same");
+
+			can->Print( (rpName).c_str()  );
+			if ( export_img )
+				can->Print( ("export/"+ config["mod"] +"/fit-" + var + "-" + dts( m1 ) + "-" + dts(m2) + ".pdf" ).c_str() );
+
+			delete ff;
+
+		}
+
+	}
+
+	virtual void make(){
+		LOG_SCOPE_FUNCTION( INFO );
+
+		can = new TCanvas( "can", "can", config.get<int>( "can:w", 500 ), config.get<int>( "can:h", 500 ) );
+		can2 = new TCanvas( "can2", "can2", config.get<int>( "can:w", 500 ), config.get<int>( "can:h2", 500 ) );
+
+		can->SetTopMargin( 0.05 );
+		can->SetRightMargin( 0.01 );
+		can->SetBottomMargin( 0.11 );
+		can->SetLeftMargin( 0.15 );
+
+		can2->SetTopMargin( 0.05 );
+		can2->SetRightMargin( 0.01 );
+		can2->SetBottomMargin( 0.11 );
+		can2->SetLeftMargin( 0.15 );
+
+
+		rpName = config[nodePath + ".output.Report:url" ];
+		can->Print( (rpName+"[").c_str() );
+
+		book->cd();
+		book->makeAll( config, nodePath + ".histograms" );
+
+		if ( "mass" == config.getString( "loop", "" ) ){
+			loop_on_mass();
+		} else {
+			loop_on_pt();
+		}
+
+		
 
 		if ( 0 == config.getInt( "jobIndex" ) || -1 == config.getInt( "jobIndex" ) ){
 			TNamed config_str( "config", config.toXml() );
@@ -605,8 +857,8 @@ public:
 		}
 
 
-		can->Print( (rpName+"]").c_str()  );
-
+		if ( nullptr != can )
+			can->Print( (rpName+"]").c_str()  );
 	} // make
 
 };
