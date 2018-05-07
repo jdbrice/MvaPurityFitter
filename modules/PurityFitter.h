@@ -85,8 +85,6 @@ Double_t fitfun4( double *x, double *par ){
 }
 
 
-
-
 class PurityFitter : public HistoAnalyzer {
 protected:
 
@@ -142,6 +140,7 @@ public:
 		build_pt_projections( "sig" );
 		build_pt_projections( "bg" );
 		build_pt_projections( "kaon" );
+		build_pt_projections( "proton" );
 
 		nSamples = config.getInt( "nSamples", 1000 );
 	}
@@ -167,11 +166,13 @@ public:
 		nn_pt[ hname ] = projections;
 	}
 
-	TH1 * pt_projection( string name, TH2 * hin, float pt1, float pt2, HistoBins &rb ){
-
+	TH1 * pt_projection( string name, TH2 * hin, double pt1, double pt2, HistoBins &rb ){
+		LOG_SCOPE_FUNCTION(INFO);
+		LOG_F( INFO, "args=(name=%s, hin=%p, pt1=%0.2f, pt2=%0.2f)", name.c_str(), hin, pt1, pt2 );
 		TAxis *x = hin->GetXaxis();
 		int ipt1 = x->FindBin( pt1 );
 		int ipt2 = x->FindBin( pt2 );
+		LOG_F( INFO, "(%0.2f -> %0.2f) = ( %d -> %d )", pt1, pt2, ipt1, ipt2 );
 
 		TH1 *hout =  hin->ProjectionY( name.c_str(), ipt1, ipt2 );
 		if ( rb.nBins() > 2 )
@@ -256,6 +257,7 @@ public:
 
 			// hbg = subsample( hbg );
 			// hkaon = subsample( hkaon );
+			// hproton = subsample( hproton );
 			// hsig = subsample( hsig );
 
 			hdata->Sumw2(true);
@@ -266,11 +268,12 @@ public:
 			if ( use_proton ) hproton->Scale( 1.0 / hproton->Integral() );
 
 			rpl.style( hdata ).set( "xtitle", v + " " + config[ "units:" + v ] )
-				.set( "title", TString::Format("%0.2f < pT < %0.2f (GeV/c)", pt1, pt2 ).Data() )
-				.set( "ytitle", "dN/d" + v + " " + config[ "units" ] + "^{-1}" )
+				// .set( "title", TString::Format("%0.2f < pT < %0.2f (GeV/c)", pt1, pt2 ).Data() )
+				.set( "ytitle", "dN/d" + v + " " + config[ "units:" + v ] + "^{-1}" )
 				.set( "lw", "1.5" )
 				.set( "fc", "#999" )
 				.set( "yto", 1.2 )
+				.set( "xtp", 16 )
 				.set( "logy", 1 )
 				.set( "draw", "h" )
 				// .set( "xr", -0.2, 1.1 )
@@ -402,9 +405,10 @@ public:
 			.set( "logy", 1 )
 			.set( "draw", "h" )
 			// .set( "xr", -0.2, 1.1 )
-			// .set( "min", 1 )
+			.set( "min", 1e-4 )
 			.set( "max", 1.0 )
-			.set( "lc", "#222222" ).draw();
+			.set( "lc", "#222222" )
+			.set( config, "style.data" ).draw();
 
 		hsig->Scale( ff->GetParameter( "signal" ) );
 		hbg->Scale( ff->GetParameter( "bg" ) );
@@ -424,57 +428,76 @@ public:
 		if ( use_proton ) rpl.style( hproton ).set( config, "style.proton" ).draw();
 		rpl.style( hsum ).set( config, "style.sum" ).draw();
 
+
 		TLatex tl;
-		tl.SetTextSize( 12.0 / 360.0 );
-		tl.DrawLatexNDC( 0.5, 0.90, TString::Format("%s : %0.2f < pT < %0.2f (GeV/c)", config["charge"].c_str(), pt1, pt2 ) );
-		tl.DrawLatexNDC( 0.5, 0.85, TString::Format("#chi^2 / ndf = %0.2f / %d = %0.2f", ff->GetChisquare(), ff->GetNDF(), ff->GetChisquare() / (float)ff->GetNDF() ) );
-		tl.DrawLatexNDC( 0.5, 0.8, TString::Format("signal = %0.2f", ff->GetParameter( "signal" )) );
-		tl.DrawLatexNDC( 0.5, 0.75, TString::Format("background (#pi) = %0.2f", ff->GetParameter( "bg" )) );
-		if ( use_kaon ) tl.DrawLatexNDC( 0.5, 0.70, TString::Format("background (K) = %0.6f", ff->GetParameter( "kaon" )) );
-		
-		if ( use_proton && !use_kaon ) tl.DrawLatexNDC( 0.5, 0.70, TString::Format("background (P) = %0.6f", ff->GetParameter( "proton" )) );
-		if ( use_proton && use_kaon ) tl.DrawLatexNDC( 0.5, 0.65, TString::Format("background (P) = %0.6f", ff->GetParameter( "proton" )) );
+		tl.SetTextFont( 42 );
+		tl.SetTextSize( 14.0 / 360.0 );
+		tl.DrawLatexNDC( config.get<float>("Text:x", 0.5), 0.90, TString::Format("%0.2f < p_{T} < %0.2f (GeV/c)", pt1, pt2 ) );
+		tl.DrawLatexNDC( config.get<float>("Text:x", 0.5), 0.85, TString::Format("#chi^{2} / ndf = %0.2f / %d = %0.2f", ff->GetChisquare(), ff->GetNDF(), ff->GetChisquare() / (float)ff->GetNDF() ) );
+		tl.DrawLatexNDC( config.get<float>("Text:x", 0.5), 0.8, TString::Format("Yield #mu = %0.3f #pm %0.3f", ff->GetParameter( "signal" ), ff->GetParError( ff->GetParNumber( "signal" )) ) );
+		tl.DrawLatexNDC( config.get<float>("Text:x", 0.5), 0.75, TString::Format("Yield #pi = %0.3f #pm %0.3f", ff->GetParameter( "bg" ), ff->GetParError( ff->GetParNumber( "bg" ))));
+		if ( use_kaon ) tl.DrawLatexNDC( config.get<float>("Text:x", 0.5), 0.70, TString::Format("Yield K = %0.3f #pm %0.3f", ff->GetParameter( "kaon" ), ff->GetParError( ff->GetParNumber( "kaon" ))) );
+		if ( use_proton && !use_kaon ) tl.DrawLatexNDC( config.get<float>("Text:x", 0.5), 0.70, TString::Format("Yield P = %0.3f #pm %0.3f", ff->GetParameter( "proton" ), ff->GetParError( ff->GetParNumber( "proton" ))) );
+		if ( use_proton && use_kaon ) tl.DrawLatexNDC( config.get<float>("Text:x", 0.5), 0.65, TString::Format("Yield P = %0.3f #pm %0.3f", ff->GetParameter( "proton" ), ff->GetParError( ff->GetParNumber( "proton" ))) );
 		
 
 		int iptbin = book->get( "chi2ndf" )->GetXaxis()->FindBin( (pt1+pt2)/2.0 );
 		book->get( "chi2ndf" )->SetBinContent( iptbin, ff->GetChisquare() / (float)ff->GetNDF() );
 
-		TLegend *leg = new TLegend( 0.15, 0.8, 0.45, 0.95 );
-		leg->SetNColumns(2);
-		leg->AddEntry( hsig, "Signal" );
-		leg->AddEntry( hbg, "#pi Background" );
-		if ( use_kaon ) leg->AddEntry( hkaon, "K Background" );
-		if ( use_proton ) leg->AddEntry( hproton, "p Background" );
+		vector<float> legPos = config.getFloatVector( "TLegend[0]:pos" );
+		TLegend *leg0 = new TLegend( legPos[0], legPos[1], legPos[2], legPos[3] );
+		leg0->SetBorderSize(0);
+		leg0->SetNColumns( config.get<int>( "TLegend[0]:ncol", 2 ) );
+		leg0->SetTextSize( config.get<float>( "TLegend[0]:point" ) / 360.0 );
+		leg0->AddEntry( hdata, "Run15 p+p @ #sqrt{s}=200 GeV", "f" );
+		
 
-		leg->Draw("same");
+		legPos = config.getFloatVector( "TLegend[1]:pos" );
+		TLegend *leg1 = new TLegend( legPos[0], legPos[1], legPos[2], legPos[3] );
+		leg1->SetBorderSize(0);
+		leg1->SetNColumns( config.get<int>( "TLegend[1]:ncol", 2 ) );
+		leg1->SetTextSize( config.get<float>( "TLegend[1]:point" ) / 360.0 );
+		leg1->AddEntry( hsig, "#mu", "l" );
+		leg1->AddEntry( hbg, "#pi", "l" );
+		if ( use_kaon ) leg1->AddEntry( hkaon, "K", "l" );
+		if ( use_proton ) leg1->AddEntry( hproton, "p", "l" );
+		
+
+		leg0->Draw("same");
+		leg1->Draw("same");
 
 		can->Print( (rpName).c_str()  );
 		if ( export_img ) can->Print( ("export/"+ config["mod"] + "/fit-" + dts( pt1 ) + "-" + dts(pt2) + ".pdf" ).c_str() );
 
+		string suffix="_"+dtes( pt1 ) +"_" + dtes(pt2);
+		TH1 * hratio = (TH1*)hsum->Clone( ("hratio_" + suffix).c_str() );
+		TH1 * hdataratio = (TH1*)hdata->Clone( ("hdataratio_" + suffix).c_str() );
 
-		hsum->Scale( Idata );
-		hdata->Scale( Idata );
-		hsum->Divide( hdata );
-		hsum->SetTitle( TString::Format("%0.2f < pT < %0.2f; %s; fit / data", pt1, pt2, var.c_str() ) );
+
+		hratio->Scale( Idata );
+		hdataratio->Scale( Idata );
+		hratio->Divide( hdataratio );
+		hratio->SetTitle( TString::Format("%0.2f < pT < %0.2f; %s; fit / data", pt1, pt2, var.c_str() ) );
 		// gPad->SetLogy(0);
 		
 		if ( config.exists( "fit:min" ) && config.exists( "fit:max" ) ){
-			hsum->Fit( "pol0", "R", "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
+			hratio->Fit( "pol0", "R", "", config.get<float>( "fit:min" ), config.get<float>( "fit:max" ) );
 		} else {
-			hsum->Fit( "pol0" );
+			hratio->Fit( "pol0" );
 		}
-		rpl.style( hsum )
+		rpl.style( hratio )
 			// .set( "xr", -0.2, 1.1 )
 			.set( "logy", 0 )
 			.set( "min", 0 )
 			.set( "max", 2.0 )
-			.set( "yto", 1.2 );
-		hsum->Draw();
+			.set( "yto", 1.2 )
+			.set( config, "style.ratio" );
+		hratio->Draw();
 
 		can->Print( (rpName).c_str()  );
 		if ( export_img ) {
 			can2->cd();
-			hsum->Draw();
+			hratio->Draw();
 			can2->Print( ("export/"+ config["mod"] +"/ratio-" + dts( pt1 ) + "-" + dts(pt2) + ".pdf" ).c_str() );
 			can->cd();
 		}
@@ -484,6 +507,9 @@ public:
 			hkaon = nullptr;
 		if ( !use_proton )
 			hproton = nullptr;
+
+		// hsum->Scale( 1.0/Idata );
+		// hdata->Scale( 1.0/Idata );
 		
 		compare_other( hsig, hbg, hkaon, hproton, pt1, pt2, can );
 		calc_purity( hsig, hbg, hkaon, nullptr, pt1, pt2 );
@@ -493,6 +519,8 @@ public:
 		LOG_SCOPE_FUNCTION( INFO );
 		TH2 * hdata_pos = get<TH2>( "pos_" + var + "_vs_pt", "data" );
 		TH2 * hdata_neg = get<TH2>( "neg_" + var + "_vs_pt", "data" );
+
+
 
 		TH2 * hmc_pos_sig = get<TH2>( "sig_pos_" + var, "mc" );
 		TH2 * hmc_neg_sig = get<TH2>( "sig_neg_" + var, "mc" );
@@ -544,10 +572,11 @@ public:
 		}
 
 		for ( int i = 0; i < pt_bins.nBins(); i++ ){
-			float pt1 = pt_bins[i];
-			float pt2 = pt_bins[(i+1)];
+			double pt1 = pt_bins[i];
+			double pt2 = pt_bins[(i+1)];
 			LOG_F( INFO, "pt=(%f, %f)", pt1, pt2 );
 
+			LOG_F( INFO, "%0.2f = %d, %0.2f = %d", pt1, hdata_use->GetXaxis()->FindBin( pt1 ), pt2, hdata_use->GetXaxis()->FindBin( pt2 ) );
 			can->Clear();
 
 			string suffix="_"+dtes( pt1 ) +"_" + dtes(pt2);
@@ -602,27 +631,39 @@ public:
 				hproton->Scale( 1.0 / hproton->Integral() );
 
 
-			hSignalPDF     = (TH1*)hsig->Clone( "hSignalPDF" );
-			hBackgroundPDF = (TH1*)hbg->Clone( "hBackgroundPDF" );
+			hSignalPDF = nullptr;
+			hBackgroundPDF = nullptr;
+			hKaonPDF = nullptr;
+			hProtonPDF = nullptr;
+
+			// hSignalPDF     = (TH1*)hsig->Clone( "hSignalPDF" );
+			// hBackgroundPDF = (TH1*)hbg->Clone( "hBackgroundPDF" );
+			// if ( use_kaon )
+			// 	hKaonPDF = (TH1*)hkaon->Clone( "hKaonPDF" );
+			// else 
+			// 	hKaonPDF = nullptr;
+			// if ( use_proton )
+			// 	hProtonPDF = (TH1*)hproton->Clone( "hProtonPDF" );
+			// else 
+			// 	hProtonPDF = nullptr;
+
+			hSignalPDF     = hsig;
+			hBackgroundPDF = hbg;
 			if ( use_kaon )
-				hKaonPDF = (TH1*)hkaon->Clone( "hKaonPDF" );
-			else 
-				hKaonPDF = nullptr;
+				hKaonPDF   = hkaon;
 			if ( use_proton )
-				hProtonPDF = (TH1*)hproton->Clone( "hProtonPDF" );
-			else 
-				hProtonPDF = nullptr;
+				hProtonPDF = hproton;
 
 			TH1 * hsum = (TH1*)hbg->Clone( ("hsum"+suffix).c_str() );
 			hsum->Reset();
 
 			fit_purity_pt( pt1, pt2, hdata, hsig, hbg, hkaon, hproton, hsum );
 			
-			delete hsum;
-			delete hsig;
-			delete hbg;
-			delete hSignalPDF;
-			delete hBackgroundPDF;
+			// delete hsum;
+			// delete hsig;
+			// delete hbg;
+			// delete hSignalPDF;
+			// delete hBackgroundPDF;
 
 		}
 	}
@@ -632,7 +673,7 @@ public:
 	 * Samples the input pT distribution and builds a weighted template for the given kinematics
 	 *
 	 */
-	void generate_templates( TH1 * hpt, TH1 * hmu, TH1 * hpi, TH1 * hk ){
+	void generate_templates( TH1 * hpt, TH1 * hmu, TH1 * hpi, TH1 * hk, TH1 * hp ){
 		LOG_SCOPE_FUNCTION( INFO );
 		
 		assert( hpt != nullptr );
@@ -652,6 +693,7 @@ public:
 		vector<TH1 * > sig_pt = nn_pt[ "sig" ];
 		vector<TH1 * > pi_pt  = nn_pt[ "bg" ];
 		vector<TH1 * > k_pt  = nn_pt[ "kaon" ];
+		vector<TH1 * > p_pt  = nn_pt[ "proton" ];
 		
 
 		for ( size_t i = 0; i < nSamples; i++ ){
@@ -665,8 +707,14 @@ public:
 			float rMu = sig_pt[ipt]->GetRandom();
 			float rPi = pi_pt[ipt]->GetRandom();
 			float rK  =  k_pt[ipt]->GetRandom();
+			float rP  =  -999;
 
-			LOG_F( 9, "pt=%f, ipt=%d, rMu=%f, rPi=%f, rK=%f", pt1, ipt, rMu, rPi, rK );
+			if ( p_pt.size() > ipt && hp != nullptr){
+				rP = hp->GetRandom();
+				hp->Fill( rP );
+			}
+
+			// LOG_F( 9, "pt=%f, ipt=%d, rMu=%f, rPi=%f, rK=%f", pt1, ipt, rMu, rPi, rK );
 
 			if ( rMu <= 0 && "mlp" == var )
 				rMu = -999;
@@ -678,7 +726,7 @@ public:
 		}
 	} // generate_templates
 
-	TF1 * fit_pid( TFitResultPtr * fr, TH1 * hvar, TH1 * hmu, TH1 * hpi, TH1 * hk = nullptr ){
+	TF1 * fit_pid( TFitResultPtr * fr, TH1 * hvar, TH1 * hmu, TH1 * hpi, TH1 * hk = nullptr, TH1 * hp = nullptr ){
 
 		TF1 * ff = nullptr;
 		if ( nullptr == hk){
@@ -687,7 +735,7 @@ public:
 			ff->SetParLimits( 0, 1e-4, 1e9 );
 			ff->SetParLimits( 1, 1e-4, 1e9 );
 			ff->SetParameters( 1.0, 100.0 );
-		} else {
+		} else if ( nullptr == hp && nullptr != hk ) {
 			ff = new TF1( "ff", fitfun3, -1, 2, 3 );
 			ff->SetParNames( "muon", "pion", "kaon" );
 			ff->SetParLimits( 0, 1e-16, 1.0 );
@@ -695,6 +743,21 @@ public:
 			ff->SetParLimits( 2, 1e-10, 1.0 );
 			ff->SetParameters( 1.0, 0.1, 0.01 );
 			// ff->FixParameter( 1, 0.00001 );
+		} else if ( nullptr == hk && nullptr != hp ){
+			ff = new TF1( "ff", fitfun3, -1, 2, 3 );
+			ff->SetParNames( "muon", "pion", "proton" );
+			ff->SetParLimits( 0, 1e-10, 1.0 );
+			ff->SetParLimits( 1, 1e-10, 1.0 );
+			ff->SetParLimits( 2, 1e-10, 1.0 );
+			ff->SetParameters( 0.1, 0.1, 0.50 );
+		} else if ( nullptr != hk && nullptr != hp ){
+			ff = new TF1( "ff", fitfun4, -1, 2, 4 );
+			ff->SetParNames( "muon", "pion", "kaon", "proton" );
+			ff->SetParLimits( 0, 1e-10, 1.0 );
+			ff->SetParLimits( 1, 1e-10, 1.0 );
+			ff->SetParLimits( 2, 1e-10, 1.0 );
+			ff->SetParLimits( 3, 1e-10, 1.0 );
+			ff->SetParameters( 1.0, 0.10, 0.50, 1e-3 );
 		}
 		
 		ff->SetNpx( 1000 );
@@ -749,29 +812,33 @@ public:
 			TH1 * hmu = new TH1F( TString::Format( "template_%s_mu_m%lu", scharge.c_str(), iMass ), "", bins[ var ].nBins(), bins[ var ].getBins().data() );
 			TH1 * hpi = new TH1F( TString::Format( "template_%s_pi_m%lu", scharge.c_str(), iMass ), "", bins[ var ].nBins(), bins[ var ].getBins().data() );
 			TH1 * hk  = new TH1F( TString::Format( "template_%s_k_m%lu", scharge.c_str(), iMass ), "", bins[ var ].nBins(), bins[ var ].getBins().data() );
+			TH1 * hp  = new TH1F( TString::Format( "template_%s_p_m%lu", scharge.c_str(), iMass ), "", bins[ var ].nBins(), bins[ var ].getBins().data() );
 
-			generate_templates( hpt, hmu, hpi, hk );
+			generate_templates( hpt, hmu, hpi, hk, hp );
 
 			hvar->Sumw2();
 			hmu->Sumw2();
 			hpi->Sumw2();
 			hk->Sumw2();
+			hp->Sumw2();
 
 			norm( hmu );
 			norm( hpi );
 			norm( hk );
+			norm( hp );
 			norm( hvar );
 
 			hSignalPDF = hmu;
 			hBackgroundPDF = hpi;
 			hKaonPDF = hk;
+			hProtonPDF = hp;
 
 			TF1 * ff = nullptr;
 			TFitResultPtr fr = nullptr;
-			ff = fit_pid( &fr, hvar, hmu, hpi, hk );
+			ff = fit_pid( &fr, hvar, hmu, hpi, hk, hp );
 
 			rpl.style( hvar ).set( config, "style.data" ).draw();
-			gPad->SetLogy(1);
+			// gPad->SetLogy(1);
 
 			hmu->Scale( ff->GetParameter( "muon" ) );
 			hpi->Scale( ff->GetParameter( "pion" ) );
@@ -817,7 +884,6 @@ public:
 			delete ff;
 
 		}
-
 	}
 
 	virtual void make(){
@@ -827,14 +893,14 @@ public:
 		can2 = new TCanvas( "can2", "can2", config.get<int>( "can:w", 500 ), config.get<int>( "can:h2", 500 ) );
 
 		can->SetTopMargin( 0.05 );
-		can->SetRightMargin( 0.01 );
+		can->SetRightMargin( 0.03 );
 		can->SetBottomMargin( 0.11 );
 		can->SetLeftMargin( 0.15 );
 
 		can2->SetTopMargin( 0.05 );
 		can2->SetRightMargin( 0.01 );
 		can2->SetBottomMargin( 0.11 );
-		can2->SetLeftMargin( 0.15 );
+		can2->SetLeftMargin( 0.075 );
 
 
 		rpName = config[nodePath + ".output.Report:url" ];

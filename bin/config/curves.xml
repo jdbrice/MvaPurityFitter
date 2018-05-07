@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+	<Task name="CutCurves" type="CutCurves" config="" nodePath="CutCurves"  />
+	<mod>pp</mod>
+
+
+	<CutCurves>
+
+		<input>
+			<TFile url="out-purity-pp-nom.root" />
+		</input>
+
+		<output>
+			<TFile url="out-cut-curves-{mod}.root" />
+		</output>
+
+	</CutCurves>
+
+	<bins>
+		<pt>1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.55, 1.6, 1.65, 1.7, 1.75, 1.8, 1.85, 1.9, 1.95, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.5, 5.0, 6.0, 8.0, 15.0</pt>
+	</bins>
+
+	<style>
+		<purity c="#F00" marker-style="8" />
+		<eff c="#00F" marker-style="8" />
+	</style>
+
+</config>
