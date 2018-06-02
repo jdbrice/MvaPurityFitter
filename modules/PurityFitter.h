@@ -107,6 +107,8 @@ protected:
 
 	map<string, vector<TH1 *>> nn_pt;
 
+	TH2 * bgTemplate, *sigTemplate;
+
 	size_t nSamples = 1000;
 public:
 
@@ -145,8 +147,25 @@ public:
 		nSamples = config.getInt( "nSamples", 1000 );
 	}
 
+	void spliceIn( TH1 * h1, TH2 * h2, float x ){
+		assert( h1 && h2 );
+
+		TAxis * h2x = h2->GetXaxis();
+		TAxis * h2y = h2->GetYaxis();
+		int ix = h2x->FindBin( x );
+
+		assert( h2y->GetNbins() == h1->GetXaxis()->GetNbins() );
+
+		for ( int iy = 1; iy < h2y->GetNbins(); iy++ ){
+			int ibin = h2->GetBin( ix, iy );
+			h2->SetBinContent( ibin, h1->GetBinContent( iy ) );
+		}
+
+	}
+
 	void build_pt_projections( string hname ){
 		LOG_SCOPE_FUNCTION( INFO );
+		LOG_F( INFO, "build_pt_projections( \"%s\", var=\"%s\" )", hname.c_str(), var.c_str() );
 		TH2 * h2rawpos = get<TH2>( hname + "_pos_" + var, "mc" );
 		TH2 * h2rbpos = HistoBins::rebin2D( hname + "posrb", h2rawpos, bins["ptTemplate"], bins[var] );
 
@@ -154,7 +173,7 @@ public:
 		TH2 * h2rbneg = HistoBins::rebin2D( hname + "negrb", h2rawpos, bins["ptTemplate"], bins[var] );
 
 		vector<TH1 *> projections;
-		LOG_F( 9, "nBins = %d", h2rbpos->GetXaxis()->GetNbins() );
+		LOG_F( INFO, "nBins(pos) = %d", h2rbpos->GetXaxis()->GetNbins() );
 		for ( size_t i = 0; i <= h2rbpos->GetXaxis()->GetNbins(); i++ ){
 			TH1 * h = h2rbpos->ProjectionY( TString::Format( "%s_pt_%lu", hname.c_str(), i ), i+1, i+1 );
 			TH1 * hn = h2rbneg->ProjectionY( TString::Format( "%s_neg_pt_%lu", hname.c_str(), i ), i+1, i+1 );
@@ -229,11 +248,11 @@ public:
 			TH2 * hmc_pos_bg = get<TH2>( "bg_pos_" + v, "mc" );
 			TH2 * hmc_neg_bg = get<TH2>( "bg_neg_" + v, "mc" );
 
-			TH2 * hmc_pos_kaon = get<TH2>( "kaon_pos_" + v, "kaon" );
-			TH2 * hmc_neg_kaon = get<TH2>( "kaon_neg_" + v, "kaon" );
+			TH2 * hmc_pos_kaon = get<TH2>( "kaon_pos_" + v, "mc" );
+			TH2 * hmc_neg_kaon = get<TH2>( "kaon_neg_" + v, "mc" );
 
-			TH2 * hmc_pos_proton = get<TH2>( "proton_pos_" + v, "proton" );
-			TH2 * hmc_neg_proton = get<TH2>( "proton_neg_" + v, "proton" );
+			TH2 * hmc_pos_proton = get<TH2>( "proton_pos_" + v, "mc" );
+			TH2 * hmc_neg_proton = get<TH2>( "proton_neg_" + v, "mc" );
 
 			TH2 * hdata_use = hdata_pos;
 			TH2 * hsig_use = hmc_pos_sig;
@@ -360,11 +379,11 @@ public:
 		} else if ( use_kaon && use_proton ){
 			ff = new TF1( "ff", fitfun4, -1, 2, 4 );
 			ff->SetParNames( "signal", "bg", "kaon", "proton" );
-			ff->SetParLimits( 0, 1e-4, 1e9 );
-			ff->SetParLimits( 1, 1e-4, 1e9 );
-			ff->SetParLimits( 2, 1e-4, 1e9 );
-			ff->SetParLimits( 3, 1e-4, 1e9 );
-			ff->SetParameters( 1.0, 100.0, 500.0, 1e-3 );
+			ff->SetParLimits( 0, 1e-14, 1.0 );
+			ff->SetParLimits( 1, 1e-14, 1.0 );
+			ff->SetParLimits( 2, 1e-14, 1.0 );
+			ff->SetParLimits( 3, 1e-14, 1.0 );
+			ff->SetParameters( 0.1, 0.1, 0.1, 1e-3 );
 		}
 		
 		ff->SetNpx( 1000 );
@@ -415,12 +434,16 @@ public:
 		if ( use_kaon ) hkaon->Scale( ff->GetParameter( "kaon" ) );
 		if ( use_proton ) hproton->Scale( ff->GetParameter( "proton" ) );
 
-		hsum->Add( hsig );
+		
 		hsum->Add( hbg );
 		if ( use_kaon )
 			hsum->Add( hkaon );
 		if ( use_proton )
 			hsum->Add( hproton );
+
+		spliceIn( hsum, bgTemplate, (pt1+pt2)/2.0 );
+
+		hsum->Add( hsig );
 
 		rpl.style( hsig ).set( config, "style.sig" ).draw();
 		rpl.style( hbg ).set( config, "style.bg" ).draw();
@@ -443,6 +466,22 @@ public:
 
 		int iptbin = book->get( "chi2ndf" )->GetXaxis()->FindBin( (pt1+pt2)/2.0 );
 		book->get( "chi2ndf" )->SetBinContent( iptbin, ff->GetChisquare() / (float)ff->GetNDF() );
+		book->get( "frac_mu" )->SetBinContent( iptbin, ff->GetParameter( "signal" ) );
+		book->get( "frac_mu" )->SetBinError( iptbin, ff->GetParError( ff->GetParNumber( "signal" )) );
+
+		book->get( "frac_pi" )->SetBinContent( iptbin, ff->GetParameter( "bg" ) );
+		book->get( "frac_pi" )->SetBinError( iptbin, ff->GetParError( ff->GetParNumber( "bg" )) );
+
+		if ( use_kaon ){
+			book->get( "frac_k" )->SetBinContent( iptbin, ff->GetParameter( "kaon" ) );
+			book->get( "frac_k" )->SetBinError( iptbin, ff->GetParError( ff->GetParNumber( "kaon" )) );
+		}
+		if ( use_proton ){
+			book->get( "frac_p" )->SetBinContent( iptbin, ff->GetParameter( "proton" ) );
+			book->get( "frac_p" )->SetBinError( iptbin, ff->GetParError( ff->GetParNumber( "proton" )) );
+		}
+		
+
 
 		vector<float> legPos = config.getFloatVector( "TLegend[0]:pos" );
 		TLegend *leg0 = new TLegend( legPos[0], legPos[1], legPos[2], legPos[3] );
@@ -528,11 +567,11 @@ public:
 		TH2 * hmc_pos_bg = get<TH2>( "bg_pos_" + var, "mc" );
 		TH2 * hmc_neg_bg = get<TH2>( "bg_neg_" + var, "mc" );
 
-		TH2 * hmc_pos_kaon = get<TH2>( "kaon_pos_" + var, "kaon" );
-		TH2 * hmc_neg_kaon = get<TH2>( "kaon_neg_" + var, "kaon" );
+		TH2 * hmc_pos_kaon = get<TH2>( "kaon_pos_" + var, "mc" );
+		TH2 * hmc_neg_kaon = get<TH2>( "kaon_neg_" + var, "mc" );
 
-		TH2 * hmc_pos_proton = get<TH2>( "proton_pos_" + var, "proton" );
-		TH2 * hmc_neg_proton = get<TH2>( "proton_neg_" + var, "proton" );
+		TH2 * hmc_pos_proton = get<TH2>( "proton_pos_" + var, "mc" );
+		TH2 * hmc_neg_proton = get<TH2>( "proton_neg_" + var, "mc" );
 		
 
 		LOG_F( INFO, "hdata_pos=%p", hdata_pos );
@@ -570,6 +609,13 @@ public:
 			hkaon_use = hmc_neg_kaon;
 			hproton_use = hmc_neg_proton;
 		}
+
+		assert( hdata_use && hsig_use && hbg_use );
+		if ( use_kaon )
+			assert( hkaon_use );
+		if ( use_proton )
+			assert( hproton_use );
+
 
 		for ( int i = 0; i < pt_bins.nBins(); i++ ){
 			double pt1 = pt_bins[i];
@@ -611,18 +657,21 @@ public:
 			LOG_F( INFO, "hkaon   = %p", hkaon );
 			LOG_F( INFO, "hproton = %p", hproton );
 
-			hdata->Sumw2(true);
+			hdata->Sumw2();
 			Idata = hdata->Integral();
 			hdata->Scale( 1.0 / Idata );
+
+			// hsig->Sumw2();
+			// hbg->Sumw2();
 
 			hsig->Scale( 1.0 / hsig->Integral() );
 			hbg->Scale( 1.0 / hbg->Integral() );
 			use_kaon = false;
-			if ( pt1 < 3.0 && allow_kaon)
+			if ( allow_kaon)
 				use_kaon = true;
 
 			use_proton = false;
-			if ( pt1 < 2.0 && allow_proton)
+			if ( allow_proton)
 				use_proton = true;
 			
 			if ( use_kaon )
@@ -680,6 +729,7 @@ public:
 		assert( nullptr != hmu );
 		assert( nullptr != hpi );
 		assert( nullptr != hk );
+		assert( nullptr != hp );
 
 		if ( hpt->Integral() <= 0 ) {
 			LOG_F( INFO, "pt is empty" );
@@ -689,6 +739,7 @@ public:
 		assert( nn_pt.count( "sig" ) > 0 );
 		assert( nn_pt.count( "bg" ) > 0 );
 		assert( nn_pt.count( "kaon" ) > 0 );
+		assert( nn_pt.count( "proton" ) > 0 );
 
 		vector<TH1 * > sig_pt = nn_pt[ "sig" ];
 		vector<TH1 * > pi_pt  = nn_pt[ "bg" ];
@@ -707,22 +758,22 @@ public:
 			float rMu = sig_pt[ipt]->GetRandom();
 			float rPi = pi_pt[ipt]->GetRandom();
 			float rK  =  k_pt[ipt]->GetRandom();
+			
 			float rP  =  -999;
 
-			if ( p_pt.size() > ipt && hp != nullptr){
-				rP = hp->GetRandom();
-				hp->Fill( rP );
+			if ( p_pt.size() > ipt && hp != nullptr && pt1 < 3.0){
+				rP = p_pt[ipt]->GetRandom();
 			}
 
-			// LOG_F( 9, "pt=%f, ipt=%d, rMu=%f, rPi=%f, rK=%f", pt1, ipt, rMu, rPi, rK );
+			// LOG_F( 9, "pt=%f, ipt=%d, rMu=%f, rPi=%f, rK=%f, rP=%f", pt1, ipt, rMu, rPi, rK, rP );
 
 			if ( rMu <= 0 && "mlp" == var )
 				rMu = -999;
 
-
 			hmu->Fill( rMu );
 			hpi->Fill( rPi );
 			hk ->Fill( rK  );
+			hp->Fill( rP );
 		}
 	} // generate_templates
 
@@ -837,26 +888,48 @@ public:
 			TFitResultPtr fr = nullptr;
 			ff = fit_pid( &fr, hvar, hmu, hpi, hk, hp );
 
+			int iptbin = book->get( "chi2ndf" )->GetXaxis()->FindBin( (m1+m2)/2.0 );
+			book->get( "chi2ndf" )->SetBinContent( iptbin, ff->GetChisquare() / (float)ff->GetNDF() );
+			book->get( "frac_mu" )->SetBinContent( iptbin, ff->GetParameter( "muon" ) );
+			book->get( "frac_mu" )->SetBinError( iptbin, ff->GetParError( ff->GetParNumber( "muon" )) );
+
+			book->get( "frac_pi" )->SetBinContent( iptbin, ff->GetParameter( "pion" ) );
+			book->get( "frac_pi" )->SetBinError( iptbin, ff->GetParError( ff->GetParNumber( "pion" )) );
+
+			book->get( "frac_k" )->SetBinContent( iptbin, ff->GetParameter( "kaon" ) );
+			book->get( "frac_k" )->SetBinError( iptbin, ff->GetParError( ff->GetParNumber( "kaon" )) );
+
+			book->get( "frac_p" )->SetBinContent( iptbin, ff->GetParameter( "proton" ) );
+			book->get( "frac_p" )->SetBinError( iptbin, ff->GetParError( ff->GetParNumber( "proton" )) );
+			
+
 			rpl.style( hvar ).set( config, "style.data" ).draw();
 			// gPad->SetLogy(1);
 
 			hmu->Scale( ff->GetParameter( "muon" ) );
 			hpi->Scale( ff->GetParameter( "pion" ) );
 			hk->Scale( ff->GetParameter( "kaon" ) );
+			hp->Scale( ff->GetParameter( "proton" ) );
 
 			TH1 * hsum = (TH1*)hmu->Clone( TString::Format( "template_%s_sum_m%lu", scharge.c_str(), iMass ) );
 			hsum->Add( hpi );
 			hsum->Add( hk );
+			hsum->Add( hp );
 
 			rpl.style( hmu ).set(config, "style.sig" );
 			rpl.style( hpi ).set(config, "style.bg" );
 			rpl.style( hk ).set(config, "style.kaon" );
+			rpl.style( hp ).set(config, "style.proton" );
 			rpl.style( hsum ).set(config, "style.sum" );
 
 			hmu->Draw( "same hist" );
 			hpi->Draw( "same hist" );
 			hk->Draw( "same hist" );
+			hp->Draw( "same hist" );
 			hsum->Draw( "same hist" );
+
+			spliceIn( hsum, bgTemplate, (m1+m2)/2.0 );
+			spliceIn( hmu,  sigTemplate, (m1+m2)/2.0 );
 
 			TLatex tl;
 			tl.SetTextSize( 12.0 / 360.0 );
@@ -865,6 +938,7 @@ public:
 			tl.DrawLatexNDC( 0.18, 0.80, TString::Format("muon = %0.4f #pm %0.4f", ff->GetParameter( "muon" ), ff->GetParError( ff->GetParNumber( "muon" ) )) );
 			tl.DrawLatexNDC( 0.58, 0.85, TString::Format("pion = %0.4f #pm %0.4f", ff->GetParameter( "pion" ), ff->GetParError( ff->GetParNumber( "pion" ) )) );
 			tl.DrawLatexNDC( 0.58, 0.80, TString::Format("kaon = %0.4f #pm %0.4f", ff->GetParameter( "kaon" ), ff->GetParError( ff->GetParNumber( "kaon" ) )) );
+			tl.DrawLatexNDC( 0.18, 0.75, TString::Format("proton = %0.4f #pm %0.4f", ff->GetParameter( "proton" ), ff->GetParError( ff->GetParNumber( "proton" ) )) );
 
 			TLegend *leg = new TLegend( 0.18, 0.88, 0.75, 0.95 );
 			leg->SetBorderSize( 0 );
@@ -908,11 +982,36 @@ public:
 
 		book->cd();
 		book->makeAll( config, nodePath + ".histograms" );
+		bgTemplate  = (TH2*)book->get( "bg_template" );
+		sigTemplate = (TH2*)book->get( "sig_template" );
 
 		if ( "mass" == config.getString( "loop", "" ) ){
 			loop_on_mass();
 		} else {
 			loop_on_pt();
+		}
+
+		if ( book->get("chi2ndf") ){
+			RooPlotLib rpl;
+			rpl.link( book );
+
+			can->Clear();
+			can->cd(0);
+			can->SetLogy(0);
+			rpl.style( "chi2ndf" ). set( config, "style.chi2ndf" ).draw();
+			can->Print( (rpName).c_str()  );
+
+
+			for ( string n : { "frac_mu", "frac_pi", "frac_k", "frac_p" } ){
+				rpl.style( n ). set( config, "style." + n ) .set( config, "style.yield_frac" ).draw();
+				can->Print( (rpName).c_str() );
+			}
+
+			rpl.style( "bg_template" ).set( config, "style.bg_template" ).draw();
+			can->Print( (rpName).c_str() );
+
+			rpl.style( "sig_template" ).set( config, "style.sig_template" ).draw();
+			can->Print( (rpName).c_str() );
 		}
 
 		
