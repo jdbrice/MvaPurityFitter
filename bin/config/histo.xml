@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+	<sys>pp</sys>
+	<mod>DNN_N6</mod>
+	<Data name="d" treeName="PairDst" url="{DIMUON_ROOT}/data/PairDst/pair_dst_{sys}_{mod}.root" />
+	<TFile url="./data/data_pdfs_{sys}_{mod}.root" />
+
+	<Transform>
+		<Draw data="d" name="pos_mlp_vs_pt" draw="d1_mPid : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.mlp" />
+		<Draw data="d" name="neg_mlp_vs_pt" draw="d2_mPid : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.mlp" />
+
+		<Draw data="d" name="pos_dY_vs_pt" draw="d1_mDeltaY : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.dY" />
+		<Draw data="d" name="neg_dY_vs_pt" draw="d2_mDeltaY : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.dY" />
+
+		<Draw data="d" name="pos_dZ_vs_pt" draw="d1_mDeltaZ : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.dZ" />
+		<Draw data="d" name="neg_dZ_vs_pt" draw="d2_mDeltaZ : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.dZ" />
+
+		<Draw data="d" name="pos_dTof_vs_pt" draw="d1_mDeltaTimeOfFlight : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.dTof" />
+		<Draw data="d" name="neg_dTof_vs_pt" draw="d2_mDeltaTimeOfFlight : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.dTof" />
+
+		<Draw data="d" name="pos_nsp_vs_pt" draw="d1_mNSigmaPion : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.nsp" />
+		<Draw data="d" name="neg_nsp_vs_pt" draw="d2_mNSigmaPion : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.nsp" />
+
+		<Draw data="d" name="pos_dca_vs_pt" draw="d1_mDCA : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.dca" />
+		<Draw data="d" name="neg_dca_vs_pt" draw="d2_mDCA : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.dca" />
+
+		<Draw data="d" name="pos_cell_vs_pt" draw="d1_mCell : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.cell" />
+		<Draw data="d" name="neg_cell_vs_pt" draw="d2_mCell : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.cell" />
+
+		<Draw data="d" name="pos_mod_vs_pt" draw="d1_mModule : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.mod" />
+		<Draw data="d" name="neg_mod_vs_pt" draw="d2_mModule : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.mod" />
+
+		<Draw data="d" name="pos_bl_vs_pt" draw="d1_mBackleg : d1_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.bl" />
+		<Draw data="d" name="neg_bl_vs_pt" draw="d2_mBackleg : d2_mPt" select="mChargeSum==0" bins_x="bins.pt" bins_y="bins.bl" />
+
+	</Transform>
+
+
+	<Transform>
+		<Draw data="d" name="pos_mlp_vs_mass" draw="d1_mPid : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.mlp" />
+		<Draw data="d" name="neg_mlp_vs_mass" draw="d2_mPid : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.mlp" />
+
+		<Draw data="d" name="pos_dY_vs_mass" draw="d1_mDeltaY : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.dY" />
+		<Draw data="d" name="neg_dY_vs_mass" draw="d2_mDeltaY : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.dY" />
+
+		<Draw data="d" name="pos_dZ_vs_mass" draw="d1_mDeltaZ : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.dZ" />
+		<Draw data="d" name="neg_dZ_vs_mass" draw="d2_mDeltaZ : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.dZ" />
+
+		<Draw data="d" name="pos_dTof_vs_mass" draw="d1_mDeltaTimeOfFlight : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.dTof" />
+		<Draw data="d" name="neg_dTof_vs_mass" draw="d2_mDeltaTimeOfFlight : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.dTof" />
+
+		<Draw data="d" name="pos_nsp_vs_mass" draw="d1_mNSigmaPion : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.nsp" />
+		<Draw data="d" name="neg_nsp_vs_mass" draw="d2_mNSigmaPion : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.nsp" />
+
+		<Draw data="d" name="pos_dca_vs_mass" draw="d1_mDCA : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.dca" />
+		<Draw data="d" name="neg_dca_vs_mass" draw="d2_mDCA : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.dca" />
+
+		<Draw data="d" name="pos_cell_vs_mass" draw="d1_mCell : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.cell" />
+		<Draw data="d" name="neg_cell_vs_mass" draw="d2_mCell : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.cell" />
+
+		<Draw data="d" name="pos_mod_vs_mass" draw="d1_mModule : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.mod" />
+		<Draw data="d" name="neg_mod_vs_mass" draw="d2_mModule : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.mod" />
+
+		<Draw data="d" name="pos_bl_vs_mass" draw="d1_mBackleg : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.bl" />
+		<Draw data="d" name="neg_bl_vs_mass" draw="d2_mBackleg : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.bl" />
+
+		<Draw data="d" name="pos_pt_vs_mass" draw="d1_mPt : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.pt" />
+		<Draw data="d" name="neg_pt_vs_mass" draw="d2_mPt : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.pt" />
+		<Draw data="d" name="pos_neg_pt_vs_mass" draw="d1_mPt : d2_mPt : mMass" select="mChargeSum==0" bins_x="bins.mass" bins_y="bins.pt" bins_z="bins.pt" />
+
+	</Transform>
+
+
+	<bins>
+		<mlp width="0.01" min="-0.5" max="1.2" />
+		<dY width="0.05" min="-80" max="80"/>
+		<dZ width="0.05" min="-100" max="100"/>
+		<dTof width="0.01" min="-10" max="15" />
+		<nsp width="0.01" min="-10" max="10" />
+		<dca width="0.01" min="0" max="5" />
+		<cell width="1" min="0" max="13" />
+		<mod width="1" min="0" max="13" />
+		<bl width="1" min="0" max="32" />
+
+		<pt width="0.010" min="0" max="5" />
+		<mass width="0.010" min="0" max="5" />
+	</bins>
+
+</config>
